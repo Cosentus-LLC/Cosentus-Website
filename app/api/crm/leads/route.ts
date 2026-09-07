@@ -285,7 +285,7 @@ async function sendLeadEmail(
       },
       body: JSON.stringify({
         from: 'Cosentus Website <website@cosentus.com>',
-        to: ['sales@cosentus.com'],
+        to: ['grow@cosentus.com'],
         reply_to: lead.email || undefined,
         subject,
         text: lines.join('\n'),

@@ -64,7 +64,7 @@ export default function Footer() {
               />
               <p style={{ marginTop: 12, fontSize: 14, color: 'var(--white)' }}>
                 +1 (877) 266 9040 &nbsp;|&nbsp;{' '}
-                <a href="mailto:sales@cosentus.com">sales@cosentus.com</a>
+                <a href="mailto:grow@cosentus.com">grow@cosentus.com</a>
               </p>
             </div>
             {/* GPTW flag rendered without the scroll-reveal wrapper so it is
