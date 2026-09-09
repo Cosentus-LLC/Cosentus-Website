@@ -75,6 +75,16 @@ ${fullTranscript.slice(0, 3000)}` }],
       }
     }
 
+    // No identifying data extracted -> no lead. With workspace-level PII
+    // redaction (ZRM) enabled on ElevenLabs, transcripts fetched here are
+    // redacted, so this path can no longer extract anything; the post-call
+    // webhook (/api/elevenlabs/post-call) is now the capture path. This
+    // guard stops the blank "Voice Caller / not provided" leads and emails
+    // this route used to create as a fallback.
+    if (!extractedLead.email && !extractedLead.phone && !extractedLead.first_name && !extractedLead.last_name) {
+      return NextResponse.json({ success: true, skipped: true, reason: 'no contact info extracted from transcript' })
+    }
+
     // Create lead from extracted data
     const firstName = extractedLead.first_name || 'Voice'
     const lastName = extractedLead.last_name || 'Caller'
