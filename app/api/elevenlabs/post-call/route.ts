@@ -91,7 +91,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, skipped: 'other agent' })
     }
 
-    const conversationId: string = data.conversation_id || 'unknown'
+    // Nullable on purpose: a sentinel like 'unknown' would become a shared
+    // dedupe key and drop every later payload that also lacks an id.
+    const conversationId: string | null = data.conversation_id || null
     const transcript: { role: string; message?: string | null }[] = data.transcript || []
 
     if (transcript.length < 2) {
@@ -119,8 +121,11 @@ export async function POST(req: NextRequest) {
 
     if (anthropicKey && fullTranscript.length > 50) {
       try {
+        // Bounded: ElevenLabs does not retry HIPAA-mode webhooks, so a stalled
+        // upstream call must fail fast rather than run to the function limit.
         const aiRes = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
+          signal: AbortSignal.timeout(15_000),
           headers: { 'Content-Type': 'application/json', 'x-api-key': anthropicKey, 'anthropic-version': '2023-06-01' },
           body: JSON.stringify({
             model: 'claude-haiku-4-5-20251001',
@@ -159,13 +164,23 @@ ${fullTranscript.slice(0, 3000)}` }],
 
     // Guard against a duplicate created moments earlier by the legacy
     // voice-capture path for this same conversation.
-    const { data: existingConv } = await supabase
-      .from('activities')
-      .select('lead_id')
-      .contains('metadata', { conversationId })
-      .limit(1)
-    if (existingConv && existingConv.length > 0) {
-      return NextResponse.json({ success: true, skipped: 'conversation already captured', lead_id: existingConv[0].lead_id })
+    if (conversationId) {
+      const { data: existingConv, error: lookupError } = await supabase
+        .from('activities')
+        .select('lead_id')
+        .contains('metadata', { conversationId })
+        .limit(1)
+      if (lookupError) {
+        // Duplicate state is unknown. We log and continue rather than drop the
+        // lead: /api/crm/leads dedupes again by email/phone, so the realistic
+        // outcome is a "returning lead" activity, whereas stopping here loses
+        // the lead with no retry (HIPAA-mode webhooks are single-shot).
+        console.error('[EL webhook] duplicate lookup failed; continuing to create', {
+          conversationId, code: lookupError.code, message: lookupError.message,
+        })
+      } else if (existingConv && existingConv.length > 0) {
+        return NextResponse.json({ success: true, skipped: 'conversation already captured', lead_id: existingConv[0].lead_id })
+      }
     }
 
     // Delegate creation/dedupe/notification to the existing lead pipeline
@@ -174,6 +189,7 @@ ${fullTranscript.slice(0, 3000)}` }],
     // origin must never derive from request headers (CodeQL js/ssrf).
     const res = await fetch(`${SITE_URL}/api/crm/leads`, {
       method: 'POST',
+      signal: AbortSignal.timeout(15_000),
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         first_name: extractedLead.first_name || 'Voice',
@@ -187,7 +203,12 @@ ${fullTranscript.slice(0, 3000)}` }],
         notes: `Voice call captured via post-call webhook. ${extractedLead.notes || ''} [Conversation: ${conversationId}]`,
       }),
     })
-    const result = await res.json()
+    if (!res.ok) {
+      const body = (await res.text().catch(() => '')).slice(0, 300)
+      console.error('[EL webhook] lead creation failed', { status: res.status, conversationId, body })
+      return NextResponse.json({ success: false, error: 'lead creation failed', status: res.status, conversationId })
+    }
+    const result = await res.json().catch(() => ({}))
 
     if (result.lead_id) {
       await supabase.from('activities').insert({
