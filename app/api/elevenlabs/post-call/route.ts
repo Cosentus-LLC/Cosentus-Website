@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createHmac, timingSafeEqual } from 'crypto'
 import { createClient } from '@supabase/supabase-js'
+import { SITE_URL } from '@/lib/site-url'
 
 /**
  * ElevenLabs post-call webhook receiver (post_call_transcription).
@@ -169,7 +170,9 @@ ${fullTranscript.slice(0, 3000)}` }],
 
     // Delegate creation/dedupe/notification to the existing lead pipeline
     // (Supabase insert, scoring, assignment, HubSpot mirror, Resend email).
-    const res = await fetch(`${req.nextUrl.origin}/api/crm/leads`, {
+    // SITE_URL (validated constant) rather than req.nextUrl.origin: the
+    // origin must never derive from request headers (CodeQL js/ssrf).
+    const res = await fetch(`${SITE_URL}/api/crm/leads`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
